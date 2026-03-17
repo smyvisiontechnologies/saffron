@@ -95,10 +95,10 @@ const About = () => {
               </div>
               <div className="team-member">
                 <img
-                  src="https://images.unsplash.com/photo-1494790108777-766d4e4f2b8b?ixlib=rb-1.2.1&auto=format&fit=crop&w=634&q=80"
+                  src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-1.2.1&auto=format&fit=crop&w=634&q=80"
                   alt="Co-founder"
                 />
-                <h3>Anita Sharma</h3>
+                <h3>Sharma</h3>
                 <p>Co-founder & Quality Director</p>
               </div>
               <div className="team-member">

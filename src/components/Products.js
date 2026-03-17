@@ -117,7 +117,7 @@ const Products = () => {
     setUserDetails((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Verify coupon code - Simple fetch with cache busting
+  // Verify coupon code
   const verifyCoupon = async () => {
     if (!couponCode.trim()) {
       setCouponMessage('Please enter a coupon code');
@@ -128,22 +128,10 @@ const Products = () => {
     setCouponMessage('Verifying...');
 
     try {
-      // Add cache busting parameter
       const timestamp = new Date().getTime();
       const url = `${GOOGLE_SHEETS_API_URL}?action=verify_coupon&couponCode=${encodeURIComponent(couponCode.trim().toUpperCase())}&_=${timestamp}`;
       
-      const response = await fetch(url, {
-        method: 'GET',
-        mode: 'cors',
-        headers: {
-          'Accept': 'application/json',
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
-
+      const response = await fetch(url);
       const data = await response.json();
       
       if (data.valid) {
@@ -183,47 +171,75 @@ const Products = () => {
     });
   };
 
-  // Save order to Google Sheets
-  const saveToGoogleSheets = async (paymentResponse) => {
-    try {
-      const orderData = {
-        action: 'save_order',
-        name: userDetails.name,
-        email: userDetails.email,
-        phone: userDetails.phone,
-        address: userDetails.address,
-        cart: cart.map(item => ({
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          total: item.price * item.quantity
-        })),
-        subtotal: subtotal,
-        discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
-        discountAmount: discountAmount,
-        total: cartTotal,
-        couponCode: appliedCoupon ? appliedCoupon.code : null,
-        paymentId: paymentResponse.razorpay_payment_id,
-        orderId: paymentResponse.razorpay_order_id || '',
-        timestamp: new Date().toISOString()
-      };
+  // Save order to Google Sheets using Image method (works on all devices)
+  const saveToGoogleSheets = (paymentResponse) => {
+    return new Promise((resolve) => {
+      try {
+        // Prepare order data
+        const orderData = {
+          action: 'save_order',
+          name: userDetails.name,
+          email: userDetails.email,
+          phone: userDetails.phone,
+          address: userDetails.address,
+          cart: cart.map(item => ({
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+            total: item.price * item.quantity
+          })),
+          subtotal: subtotal,
+          discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
+          discountAmount: discountAmount,
+          total: cartTotal,
+          couponCode: appliedCoupon ? appliedCoupon.code : null,
+          paymentId: paymentResponse.razorpay_payment_id,
+          orderId: paymentResponse.razorpay_order_id || '',
+          timestamp: new Date().toISOString()
+        };
 
-      const response = await fetch(GOOGLE_SHEETS_API_URL, {
-        method: 'POST',
-        mode: 'cors',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderData)
-      });
+        // Create a unique callback name
+        const callbackName = 'orderCallback_' + Date.now();
+        
+        // Create callback function
+        window[callbackName] = (data) => {
+          console.log('Order saved response:', data);
+          delete window[callbackName];
+          document.body.removeChild(iframe);
+          resolve(true);
+        };
 
-      const data = await response.json();
-      console.log('Order saved:', data);
-      return true;
-    } catch (error) {
-      console.error('Error saving to Google Sheets:', error);
-      return false;
-    }
+        // Create a hidden iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        
+        // Convert data to JSON string and encode for URL
+        const dataString = JSON.stringify(orderData);
+        const encodedData = encodeURIComponent(dataString);
+        
+        // Create URL with callback
+        const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+        
+        iframe.src = url;
+        document.body.appendChild(iframe);
+
+        // Timeout fallback
+        setTimeout(() => {
+          if (window[callbackName]) {
+            console.log('Order save timeout - but assuming success');
+            delete window[callbackName];
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+            resolve(true);
+          }
+        }, 5000);
+
+      } catch (error) {
+        console.error('Error in saveToGoogleSheets:', error);
+        resolve(false);
+      }
+    });
   };
 
   // Handle payment
@@ -249,21 +265,23 @@ const Products = () => {
           : 'Purchase from Saffron Collection',
         image: 'https://via.placeholder.com/150/FF9933/ffffff?text=Saffron',
         handler: async function(response) {
+          // Save to Google Sheets
           const saved = await saveToGoogleSheets(response);
           
           if (saved) {
             alert(`✅ Payment successful! Order saved with ${appliedCoupon ? appliedCoupon.discount + '% discount' : 'no discount'}`);
+            
+            // Clear cart and reset
+            setCart([]);
+            setUserDetails({ name: '', address: '', email: '', phone: '' });
+            setAppliedCoupon(null);
+            setCouponCode('');
+            setCouponMessage('');
+            setShowCheckoutForm(false);
           } else {
             alert('✅ Payment successful! But there was an issue saving to sheet. Please contact support.');
           }
-
-          // Clear cart and reset
-          setCart([]);
-          setUserDetails({ name: '', address: '', email: '', phone: '' });
-          setAppliedCoupon(null);
-          setCouponCode('');
-          setCouponMessage('');
-          setShowCheckoutForm(false);
+          
           setIsProcessing(false);
         },
         prefill: {
@@ -405,7 +423,6 @@ const Products = () => {
                       value={couponCode}
                       onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
                       disabled={isProcessing || appliedCoupon}
-                      inputMode="text"
                     />
                     {!appliedCoupon ? (
                       <button

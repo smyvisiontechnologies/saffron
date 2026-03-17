@@ -256,7 +256,7 @@ const Products = () => {
       }
 
       const options = {
-        key: 'rzp_live_SRu7Tc3XH6E9SE', // Replace with your Razorpay test key
+        key: 'rzp_test_SSFd6Wi6rQaAXP', // Replace with your Razorpay test key
         amount: Math.round(cartTotal * 100),
         currency: 'INR',
         name: 'Saffron Co.',

@@ -4,8 +4,20 @@ const Home = () => {
   return (
     <>
       <main className="home">
-        {/* Hero Section */}
+        {/* Hero Section with Video Background */}
         <section className="hero">
+          <video 
+            autoPlay 
+            loop 
+            muted 
+            playsInline
+            className="hero-video"
+          >
+            <source src="/videos/saffron.mp4" type="video/mp4" />
+            {/* Add fallback for browsers that don't support video */}
+            Your browser does not support the video tag.
+          </video>
+          <div className="hero-overlay"></div>
           <div className="hero-content">
             <h1>Premium Saffron from the Valleys of Kashmir</h1>
             <p>
@@ -81,20 +93,41 @@ const Home = () => {
           padding: 0 20px;
         }
 
-        /* Hero Section */
+        /* Hero Section with Video */
         .hero {
-          background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)),
-            url('https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80')
-            no-repeat center center/cover;
+          position: relative;
           height: 80vh;
           display: flex;
           align-items: center;
           justify-content: center;
           text-align: center;
           color: #fff;
+          overflow: hidden;
+        }
+
+        .hero-video {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          z-index: 0;
+        }
+
+        .hero-overlay {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.5);
+          z-index: 1;
         }
 
         .hero-content {
+          position: relative;
+          z-index: 2;
           max-width: 800px;
           padding: 20px;
         }

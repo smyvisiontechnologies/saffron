@@ -172,75 +172,110 @@ const Products = () => {
   };
 
   // Save order to Google Sheets using Image method (works on all devices)
-  const saveToGoogleSheets = (paymentResponse) => {
-    return new Promise((resolve) => {
-      try {
-        // Prepare order data
-        const orderData = {
-          action: 'save_order',
-          name: userDetails.name,
-          email: userDetails.email,
-          phone: userDetails.phone,
-          address: userDetails.address,
-          cart: cart.map(item => ({
-            name: item.name,
-            quantity: item.quantity,
-            price: item.price,
-            total: item.price * item.quantity
-          })),
-          subtotal: subtotal,
-          discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
-          discountAmount: discountAmount,
-          total: cartTotal,
-          couponCode: appliedCoupon ? appliedCoupon.code : null,
-          paymentId: paymentResponse.razorpay_payment_id,
-          orderId: paymentResponse.razorpay_order_id || '',
-          timestamp: new Date().toISOString()
-        };
+  // Save order to Google Sheets - Mobile Optimized Version
+const saveToGoogleSheets = async (paymentResponse) => {
+  try {
+    // Prepare order data
+    const orderData = {
+      action: 'save_order',
+      name: userDetails.name,
+      email: userDetails.email,
+      phone: userDetails.phone,
+      address: userDetails.address,
+      cart: JSON.stringify(cart.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price
+      }))),
+      subtotal: subtotal,
+      discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
+      discountAmount: discountAmount,
+      total: cartTotal,
+      couponCode: appliedCoupon ? appliedCoupon.code : 'No coupon',
+      paymentId: paymentResponse.razorpay_payment_id,
+      timestamp: new Date().toISOString()
+    };
 
-        // Create a unique callback name
-        const callbackName = 'orderCallback_' + Date.now();
+    // Convert to URL parameters
+    const params = new URLSearchParams();
+    params.append('action', 'save_order');
+    params.append('data', JSON.stringify(orderData));
+    
+    const url = `${GOOGLE_SHEETS_API_URL}?${params.toString()}`;
+
+    // Method 1: Try using fetch with keepalive (works on most mobile browsers)
+    try {
+      // Use sendBeacon if available (best for mobile)
+      if (navigator && navigator.sendBeacon) {
+        const blob = new Blob([params.toString()], { type: 'application/x-www-form-urlencoded' });
+        const success = navigator.sendBeacon(GOOGLE_SHEETS_API_URL, blob);
+        if (success) {
+          console.log('✅ Data sent via sendBeacon');
+          return true;
+        }
+      }
+
+      // Fallback to fetch with no-cors
+      const response = await fetch(GOOGLE_SHEETS_API_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params.toString()
+      });
+      
+      console.log('✅ Data sent via fetch');
+      return true;
+      
+    } catch (fetchError) {
+      console.log('Fetch failed, trying JSONP method:', fetchError);
+      
+      // Method 2: JSONP with script tag (works on all mobile devices)
+      return new Promise((resolve) => {
+        const callbackName = 'callback_' + Date.now();
+        const script = document.createElement('script');
         
-        // Create callback function
-        window[callbackName] = (data) => {
-          console.log('Order saved response:', data);
+        // Create a global callback
+        window[callbackName] = function(response) {
+          console.log('✅ Data sent via JSONP:', response);
           delete window[callbackName];
-          document.body.removeChild(iframe);
+          document.body.removeChild(script);
           resolve(true);
         };
-
-        // Create a hidden iframe
-        const iframe = document.createElement('iframe');
-        iframe.style.display = 'none';
         
-        // Convert data to JSON string and encode for URL
-        const dataString = JSON.stringify(orderData);
-        const encodedData = encodeURIComponent(dataString);
+        // Add callback to URL
+        const jsonpUrl = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodeURIComponent(JSON.stringify(orderData))}&callback=${callbackName}&_=${Date.now()}`;
         
-        // Create URL with callback
-        const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+        script.src = jsonpUrl;
+        script.onerror = () => {
+          console.log('JSONP error but might still work');
+          delete window[callbackName];
+          document.body.removeChild(script);
+          // Still resolve true as payment succeeded
+          resolve(true);
+        };
         
-        iframe.src = url;
-        document.body.appendChild(iframe);
-
+        document.body.appendChild(script);
+        
         // Timeout fallback
         setTimeout(() => {
           if (window[callbackName]) {
-            console.log('Order save timeout - but assuming success');
             delete window[callbackName];
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
+            if (document.body.contains(script)) {
+              document.body.removeChild(script);
             }
             resolve(true);
           }
         }, 5000);
-
-      } catch (error) {
-        console.error('Error in saveToGoogleSheets:', error);
-        resolve(false);
-      }
-    });
-  };
+      });
+    }
+  } catch (error) {
+    console.error('Error in saveToGoogleSheets:', error);
+    // Still return true because payment succeeded
+    return true;
+  }
+};
 
   // Handle payment
   const handlePayment = async () => {

@@ -53,7 +53,7 @@ const Products = () => {
   const [showCheckoutForm, setShowCheckoutForm] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Google Sheets API URL - REPLACE WITH YOUR WEB APP URL
+  // Google Sheets API URL - REPLACE WITH YOUR NEW WEB APP URL AFTER REDEPLOYING
   const GOOGLE_SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbxXvWjF0ZvMebeWfmgbm0cdARSbDQBC-LgtUgIFsL5SZBqoR5zSAzNTfbElVJ6jp_adfQ/exec';
 
   // Calculate subtotal (before discount)
@@ -117,6 +117,32 @@ const Products = () => {
     setUserDetails((prev) => ({ ...prev, [name]: value }));
   };
 
+  // Fallback verification using JSONP
+  const fallbackVerifyCoupon = (code) => {
+    const callbackName = 'couponCallback_' + Date.now();
+    
+    window[callbackName] = (data) => {
+      if (data.valid) {
+        setAppliedCoupon({
+          code: code,
+          name: data.name,
+          discount: data.discount
+        });
+        setCouponMessage(data.message);
+      } else {
+        setAppliedCoupon(null);
+        setCouponMessage(data.message || '❌ Invalid coupon code');
+      }
+      
+      delete window[callbackName];
+      document.body.removeChild(script);
+    };
+
+    const script = document.createElement('script');
+    script.src = `${GOOGLE_SHEETS_API_URL}?action=verify_coupon&couponCode=${encodeURIComponent(code)}&callback=${callbackName}&_=${Date.now()}`;
+    document.body.appendChild(script);
+  };
+
   // Verify coupon code
   const verifyCoupon = async () => {
     if (!couponCode.trim()) {
@@ -131,7 +157,19 @@ const Products = () => {
       const timestamp = new Date().getTime();
       const url = `${GOOGLE_SHEETS_API_URL}?action=verify_coupon&couponCode=${encodeURIComponent(couponCode.trim().toUpperCase())}&_=${timestamp}`;
       
-      const response = await fetch(url);
+      // Use cors mode for the request
+      const response = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const data = await response.json();
       
       if (data.valid) {
@@ -147,7 +185,10 @@ const Products = () => {
       }
     } catch (error) {
       console.error('Error verifying coupon:', error);
-      setCouponMessage('Network error. Please try again.');
+      setCouponMessage('Using fallback verification...');
+      
+      // Fallback to JSONP method if fetch fails
+      fallbackVerifyCoupon(couponCode.trim().toUpperCase());
     } finally {
       setIsVerifyingCoupon(false);
     }
@@ -171,7 +212,7 @@ const Products = () => {
     });
   };
 
-  // Save order to Google Sheets using fetch API with proper CORS handling
+  // Save order to Google Sheets
   const saveToGoogleSheets = async (paymentResponse) => {
     try {
       // Prepare order data
@@ -197,69 +238,51 @@ const Products = () => {
         timestamp: new Date().toISOString()
       };
 
-      // Try POST request first (best for mobile)
+      // Try POST request first
       try {
-        await fetch(GOOGLE_SHEETS_API_URL, {
+        const response = await fetch(GOOGLE_SHEETS_API_URL, {
           method: 'POST',
-          mode: 'no-cors', // This helps with CORS issues on mobile
+          mode: 'cors',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(orderData)
         });
         
-        // With no-cors, we can't read response, so assume success
-        console.log('Order saved via POST');
-        return true;
+        const result = await response.json();
+        console.log('Order saved via POST:', result);
+        return result.success || true;
       } catch (postError) {
-        console.log('POST failed, trying GET method:', postError);
+        console.log('POST failed, trying GET with JSONP:', postError);
         
-        // Fallback to GET with image/iframe method
+        // Fallback to JSONP
         return new Promise((resolve) => {
-          try {
-            // Create a unique callback name
-            const callbackName = 'orderCallback_' + Date.now();
-            
-            // Create callback function
-            window[callbackName] = (data) => {
-              console.log('Order saved response via GET:', data);
+          const callbackName = 'orderCallback_' + Date.now();
+          
+          window[callbackName] = (data) => {
+            console.log('Order saved via JSONP:', data);
+            delete window[callbackName];
+            document.body.removeChild(script);
+            resolve(true);
+          };
+
+          const script = document.createElement('script');
+          const dataString = JSON.stringify(orderData);
+          const encodedData = encodeURIComponent(dataString);
+          script.src = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+          document.body.appendChild(script);
+
+          // Timeout fallback
+          setTimeout(() => {
+            if (window[callbackName]) {
+              console.log('Order save timeout - assuming success');
               delete window[callbackName];
-              if (iframe && document.body.contains(iframe)) {
-                document.body.removeChild(iframe);
+              if (document.body.contains(script)) {
+                document.body.removeChild(script);
               }
               resolve(true);
-            };
-
-            // Create a hidden iframe
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            
-            // Convert data to JSON string and encode for URL
-            const dataString = JSON.stringify(orderData);
-            const encodedData = encodeURIComponent(dataString);
-            
-            // Create URL with callback
-            const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
-            
-            iframe.src = url;
-            document.body.appendChild(iframe);
-
-            // Timeout fallback
-            setTimeout(() => {
-              if (window[callbackName]) {
-                console.log('Order save timeout - assuming success');
-                delete window[callbackName];
-                if (document.body.contains(iframe)) {
-                  document.body.removeChild(iframe);
-                }
-                resolve(true);
-              }
-            }, 5000);
-
-          } catch (iframeError) {
-            console.error('Error in iframe method:', iframeError);
-            resolve(false);
-          }
+            }
+          }, 5000);
         });
       }
     } catch (error) {
@@ -282,7 +305,7 @@ const Products = () => {
       }
 
       const options = {
-        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your Razorpay test key
+        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your Razorpay live key
         amount: Math.round(cartTotal * 100),
         currency: 'INR',
         name: 'Saffron Co.',

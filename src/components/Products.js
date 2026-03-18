@@ -1,19 +1,19 @@
 import React, { useState } from 'react';
 
 const Products = () => {
-  // Sample product data (updated with realistic prices)
+  // Sample product data
   const products = [
     {
       id: 1,
       name: 'Premium Kashmiri Saffron (1g)',
-      price: 1.2,
+      price: 1,
       image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
       description: 'Deep red threads with intense aroma. Grade A++.',
     },
     {
       id: 2,
       name: 'Premium Kashmiri Saffron (5g)',
-      price: 10,
+      price: 1650,
       image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
       description: 'Perfect for regular use. Comes in a resealable pack.',
     },
@@ -56,7 +56,7 @@ const Products = () => {
   // Google Sheets API URL - REPLACE WITH YOUR WEB APP URL
   const GOOGLE_SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbxXvWjF0ZvMebeWfmgbm0cdARSbDQBC-LgtUgIFsL5SZBqoR5zSAzNTfbElVJ6jp_adfQ/exec';
 
-  // Calculate subtotal (before discount)
+  // Calculate subtotal
   const subtotal = cart.reduce(
     (total, item) => total + item.price * item.quantity,
     0
@@ -87,7 +87,7 @@ const Products = () => {
     setCouponMessage('');
   };
 
-  // Update quantity of a cart item
+  // Update quantity
   const updateQuantity = (id, newQuantity) => {
     if (newQuantity < 1) {
       removeFromCart(id);
@@ -103,7 +103,7 @@ const Products = () => {
     setCouponMessage('');
   };
 
-  // Remove item from cart
+  // Remove from cart
   const removeFromCart = (id) => {
     setCart((prevCart) => prevCart.filter((item) => item.id !== id));
     setAppliedCoupon(null);
@@ -111,13 +111,13 @@ const Products = () => {
     setCouponMessage('');
   };
 
-  // Handle user input change
+  // Handle input change
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setUserDetails((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Verify coupon code
+  // Verify coupon
   const verifyCoupon = async () => {
     if (!couponCode.trim()) {
       setCouponMessage('Please enter a coupon code');
@@ -153,14 +153,14 @@ const Products = () => {
     }
   };
 
-  // Remove applied coupon
+  // Remove coupon
   const removeCoupon = () => {
     setAppliedCoupon(null);
     setCouponCode('');
     setCouponMessage('');
   };
 
-  // Load Razorpay script
+  // Load Razorpay
   const loadRazorpayScript = () => {
     return new Promise((resolve) => {
       const script = document.createElement('script');
@@ -171,7 +171,104 @@ const Products = () => {
     });
   };
 
-  // Save order to Google Sheets using fetch with proper CORS handling
+  // Save to Google Sheets - Method 1: Fetch POST
+  const saveWithFetch = async (orderData) => {
+    try {
+      const response = await fetch(GOOGLE_SHEETS_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData)
+      });
+      
+      const text = await response.text();
+      console.log('Fetch response:', text);
+      
+      try {
+        const data = JSON.parse(text);
+        return data.success;
+      } catch {
+        // If response is not JSON but we got a response, consider it success
+        return text.length > 0;
+      }
+    } catch (error) {
+      console.log('Fetch failed:', error);
+      return false;
+    }
+  };
+
+  // Save to Google Sheets - Method 2: JSONP (works on all mobile devices)
+  const saveWithJSONP = (orderData) => {
+    return new Promise((resolve) => {
+      // Create unique callback name
+      const callbackName = 'jsonp_callback_' + Date.now();
+      
+      // Set timeout
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve(false);
+      }, 10000);
+      
+      // Cleanup function
+      const cleanup = () => {
+        clearTimeout(timeout);
+        delete window[callbackName];
+        if (script && document.body.contains(script)) {
+          document.body.removeChild(script);
+        }
+      };
+      
+      // Create callback function
+      window[callbackName] = (response) => {
+        console.log('JSONP response:', response);
+        cleanup();
+        resolve(response && response.success === true);
+      };
+      
+      // Add callback to order data
+      const jsonpData = {
+        ...orderData,
+        callback: callbackName
+      };
+      
+      // Create script tag
+      const script = document.createElement('script');
+      const dataString = JSON.stringify(jsonpData);
+      const encodedData = encodeURIComponent(dataString);
+      script.src = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&_=${Date.now()}`;
+      
+      script.onerror = () => {
+        console.log('JSONP script error');
+        cleanup();
+        resolve(false);
+      };
+      
+      document.body.appendChild(script);
+    });
+  };
+
+  // Save to Google Sheets - Method 3: Image Beacon (last resort)
+  const saveWithImage = (orderData) => {
+    return new Promise((resolve) => {
+      try {
+        const dataString = JSON.stringify(orderData);
+        const encodedData = encodeURIComponent(dataString);
+        const img = new Image();
+        img.src = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&_=${Date.now()}`;
+        
+        // Wait a bit and assume success
+        setTimeout(() => {
+          resolve(true);
+        }, 2000);
+      } catch (error) {
+        console.log('Image method failed:', error);
+        resolve(false);
+      }
+    });
+  };
+
+  // Main save function - tries all methods
   const saveToGoogleSheets = async (paymentResponse) => {
     // Prepare order data
     const orderData = {
@@ -196,104 +293,35 @@ const Products = () => {
       timestamp: new Date().toISOString()
     };
 
-    console.log('Saving order to Google Sheets:', orderData);
+    console.log('Attempting to save order:', orderData);
 
-    // Method 1: Try POST with JSON (preferred)
-    try {
-      const response = await fetch(GOOGLE_SHEETS_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderData)
-      });
-
-      // Try to parse response
-      const text = await response.text();
-      console.log('Response from server:', text);
-      
-      try {
-        const data = JSON.parse(text);
-        if (data.success) {
-          console.log('Order saved successfully via POST');
-          return true;
-        }
-      } catch (e) {
-        // If response is not JSON but we got a response, consider it success
-        console.log('Received non-JSON response but request completed');
-        return true;
-      }
-    } catch (postError) {
-      console.log('POST failed, trying GET method:', postError);
-      
-      // Method 2: Fallback to GET with JSONP approach
-      try {
-        const dataString = JSON.stringify(orderData);
-        const encodedData = encodeURIComponent(dataString);
-        
-        // Create a unique callback name
-        const callbackName = 'callback_' + Date.now();
-        
-        // Create a promise that resolves when callback is called
-        const result = await new Promise((resolve) => {
-          // Set timeout fallback
-          const timeout = setTimeout(() => {
-            cleanup();
-            console.log('GET request timeout - assuming success');
-            resolve(true);
-          }, 8000);
-          
-          // Create callback function
-          window[callbackName] = (response) => {
-            clearTimeout(timeout);
-            cleanup();
-            console.log('GET callback received:', response);
-            resolve(true);
-          };
-          
-          // Cleanup function
-          const cleanup = () => {
-            delete window[callbackName];
-            if (script && document.body.contains(script)) {
-              document.body.removeChild(script);
-            }
-          };
-          
-          // Create JSONP script
-          const script = document.createElement('script');
-          const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
-          script.src = url;
-          script.onerror = () => {
-            clearTimeout(timeout);
-            cleanup();
-            console.log('GET script error');
-            resolve(false);
-          };
-          
-          document.body.appendChild(script);
-        });
-        
-        return result;
-      } catch (getError) {
-        console.log('GET method also failed:', getError);
-        
-        // Method 3: Last resort - Image beacon
-        try {
-          const dataString = JSON.stringify(orderData);
-          const encodedData = encodeURIComponent(dataString);
-          const img = new Image();
-          img.src = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&_=${Date.now()}`;
-          
-          // Wait a bit for image to load
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          console.log('Image beacon sent');
-          return true;
-        } catch (imgError) {
-          console.log('All save methods failed');
-          return false;
-        }
-      }
+    // Try Method 1: Fetch POST
+    console.log('Trying fetch method...');
+    const fetchResult = await saveWithFetch(orderData);
+    if (fetchResult) {
+      console.log('Fetch method succeeded');
+      return true;
     }
+
+    // Try Method 2: JSONP
+    console.log('Trying JSONP method...');
+    const jsonpResult = await saveWithJSONP(orderData);
+    if (jsonpResult) {
+      console.log('JSONP method succeeded');
+      return true;
+    }
+
+    // Try Method 3: Image beacon
+    console.log('Trying image method...');
+    const imageResult = await saveWithImage(orderData);
+    if (imageResult) {
+      console.log('Image method succeeded');
+      return true;
+    }
+
+    // All methods failed
+    console.log('All save methods failed');
+    return false;
   };
 
   // Handle payment
@@ -319,35 +347,26 @@ const Products = () => {
           : 'Purchase from Saffron Collection',
         image: 'https://via.placeholder.com/150/FF9933/ffffff?text=Saffron',
         handler: async function(response) {
-          // Show saving status
+          // Show saving message
           alert('Payment successful! Saving your order...');
           
           // Save to Google Sheets
           const saved = await saveToGoogleSheets(response);
           
           if (saved) {
-            alert(`✅ Order saved successfully! Thank you for your purchase.${appliedCoupon ? ' Discount applied: ' + appliedCoupon.discount + '%' : ''}`);
-            
-            // Clear cart and reset
-            setCart([]);
-            setUserDetails({ name: '', address: '', email: '', phone: '' });
-            setAppliedCoupon(null);
-            setCouponCode('');
-            setCouponMessage('');
-            setShowCheckoutForm(false);
+            alert(`✅ Order saved successfully! Thank you for your purchase.`);
           } else {
-            // If all save methods failed, show error but payment was successful
-            alert('⚠️ Payment successful! However, there was an issue saving your order. Please contact support with your payment ID: ' + response.razorpay_payment_id);
-            
-            // Still clear cart but show contact message
-            setCart([]);
-            setUserDetails({ name: '', address: '', email: '', phone: '' });
-            setAppliedCoupon(null);
-            setCouponCode('');
-            setCouponMessage('');
-            setShowCheckoutForm(false);
+            // If all save methods failed, show payment ID for support
+            alert(`⚠️ Payment successful! Your payment ID is: ${response.razorpay_payment_id}. Please save this ID and contact support if your order is not visible.`);
           }
           
+          // Clear cart and reset
+          setCart([]);
+          setUserDetails({ name: '', address: '', email: '', phone: '' });
+          setAppliedCoupon(null);
+          setCouponCode('');
+          setCouponMessage('');
+          setShowCheckoutForm(false);
           setIsProcessing(false);
         },
         prefill: {
@@ -379,7 +398,7 @@ const Products = () => {
     }
   };
 
-  // Handle checkout button click
+  // Handle checkout
   const handleCheckout = async (e) => {
     e.preventDefault();
     

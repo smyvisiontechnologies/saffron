@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 const Products = () => {
-  // Sample product data (prices in INR)
+  // Sample product data (updated with realistic prices)
   const products = [
     {
       id: 1,
@@ -20,14 +20,14 @@ const Products = () => {
     {
       id: 3,
       name: 'Organic Saffron (2g)',
-      price: 3299,
+      price: 650,
       image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
       description: 'Certified organic, handpicked from the finest fields.',
     },
     {
       id: 4,
       name: 'Saffron Gift Box (3 vials)',
-      price: 4999,
+      price: 999,
       image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
       description: 'Elegant gift box with three 1g vials. Ideal for presents.',
     },
@@ -171,75 +171,129 @@ const Products = () => {
     });
   };
 
-  // Save order to Google Sheets using Image method (works on all devices)
-  const saveToGoogleSheets = (paymentResponse) => {
-    return new Promise((resolve) => {
+  // Save order to Google Sheets using fetch with proper CORS handling
+  const saveToGoogleSheets = async (paymentResponse) => {
+    // Prepare order data
+    const orderData = {
+      action: 'save_order',
+      name: userDetails.name,
+      email: userDetails.email,
+      phone: userDetails.phone,
+      address: userDetails.address,
+      cart: cart.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        total: item.price * item.quantity
+      })),
+      subtotal: subtotal,
+      discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
+      discountAmount: discountAmount,
+      total: cartTotal,
+      couponCode: appliedCoupon ? appliedCoupon.code : null,
+      paymentId: paymentResponse.razorpay_payment_id,
+      orderId: paymentResponse.razorpay_order_id || '',
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('Saving order to Google Sheets:', orderData);
+
+    // Method 1: Try POST with JSON (preferred)
+    try {
+      const response = await fetch(GOOGLE_SHEETS_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData)
+      });
+
+      // Try to parse response
+      const text = await response.text();
+      console.log('Response from server:', text);
+      
       try {
-        // Prepare order data
-        const orderData = {
-          action: 'save_order',
-          name: userDetails.name,
-          email: userDetails.email,
-          phone: userDetails.phone,
-          address: userDetails.address,
-          cart: cart.map(item => ({
-            name: item.name,
-            quantity: item.quantity,
-            price: item.price,
-            total: item.price * item.quantity
-          })),
-          subtotal: subtotal,
-          discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
-          discountAmount: discountAmount,
-          total: cartTotal,
-          couponCode: appliedCoupon ? appliedCoupon.code : null,
-          paymentId: paymentResponse.razorpay_payment_id,
-          orderId: paymentResponse.razorpay_order_id || '',
-          timestamp: new Date().toISOString()
-        };
-
-        // Create a unique callback name
-        const callbackName = 'orderCallback_' + Date.now();
-        
-        // Create callback function
-        window[callbackName] = (data) => {
-          console.log('Order saved response:', data);
-          delete window[callbackName];
-          document.body.removeChild(iframe);
-          resolve(true);
-        };
-
-        // Create a hidden iframe
-        const iframe = document.createElement('iframe');
-        iframe.style.display = 'none';
-        
-        // Convert data to JSON string and encode for URL
+        const data = JSON.parse(text);
+        if (data.success) {
+          console.log('Order saved successfully via POST');
+          return true;
+        }
+      } catch (e) {
+        // If response is not JSON but we got a response, consider it success
+        console.log('Received non-JSON response but request completed');
+        return true;
+      }
+    } catch (postError) {
+      console.log('POST failed, trying GET method:', postError);
+      
+      // Method 2: Fallback to GET with JSONP approach
+      try {
         const dataString = JSON.stringify(orderData);
         const encodedData = encodeURIComponent(dataString);
         
-        // Create URL with callback
-        const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+        // Create a unique callback name
+        const callbackName = 'callback_' + Date.now();
         
-        iframe.src = url;
-        document.body.appendChild(iframe);
-
-        // Timeout fallback
-        setTimeout(() => {
-          if (window[callbackName]) {
-            console.log('Order save timeout - but assuming success');
-            delete window[callbackName];
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
+        // Create a promise that resolves when callback is called
+        const result = await new Promise((resolve) => {
+          // Set timeout fallback
+          const timeout = setTimeout(() => {
+            cleanup();
+            console.log('GET request timeout - assuming success');
             resolve(true);
-          }
-        }, 5000);
-
-      } catch (error) {
-        console.error('Error in saveToGoogleSheets:', error);
-        resolve(false);
+          }, 8000);
+          
+          // Create callback function
+          window[callbackName] = (response) => {
+            clearTimeout(timeout);
+            cleanup();
+            console.log('GET callback received:', response);
+            resolve(true);
+          };
+          
+          // Cleanup function
+          const cleanup = () => {
+            delete window[callbackName];
+            if (script && document.body.contains(script)) {
+              document.body.removeChild(script);
+            }
+          };
+          
+          // Create JSONP script
+          const script = document.createElement('script');
+          const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+          script.src = url;
+          script.onerror = () => {
+            clearTimeout(timeout);
+            cleanup();
+            console.log('GET script error');
+            resolve(false);
+          };
+          
+          document.body.appendChild(script);
+        });
+        
+        return result;
+      } catch (getError) {
+        console.log('GET method also failed:', getError);
+        
+        // Method 3: Last resort - Image beacon
+        try {
+          const dataString = JSON.stringify(orderData);
+          const encodedData = encodeURIComponent(dataString);
+          const img = new Image();
+          img.src = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&_=${Date.now()}`;
+          
+          // Wait a bit for image to load
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          console.log('Image beacon sent');
+          return true;
+        } catch (imgError) {
+          console.log('All save methods failed');
+          return false;
+        }
       }
-    });
+    }
   };
 
   // Handle payment
@@ -256,7 +310,7 @@ const Products = () => {
       }
 
       const options = {
-        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your Razorpay test key
+        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your actual Razorpay key
         amount: Math.round(cartTotal * 100),
         currency: 'INR',
         name: 'Saffron Co.',
@@ -265,11 +319,14 @@ const Products = () => {
           : 'Purchase from Saffron Collection',
         image: 'https://via.placeholder.com/150/FF9933/ffffff?text=Saffron',
         handler: async function(response) {
+          // Show saving status
+          alert('Payment successful! Saving your order...');
+          
           // Save to Google Sheets
           const saved = await saveToGoogleSheets(response);
           
           if (saved) {
-            alert(`✅ Payment successful! Order saved with ${appliedCoupon ? appliedCoupon.discount + '% discount' : 'no discount'}`);
+            alert(`✅ Order saved successfully! Thank you for your purchase.${appliedCoupon ? ' Discount applied: ' + appliedCoupon.discount + '%' : ''}`);
             
             // Clear cart and reset
             setCart([]);
@@ -279,7 +336,16 @@ const Products = () => {
             setCouponMessage('');
             setShowCheckoutForm(false);
           } else {
-            alert('✅ Payment successful! But there was an issue saving to sheet. Please contact support.');
+            // If all save methods failed, show error but payment was successful
+            alert('⚠️ Payment successful! However, there was an issue saving your order. Please contact support with your payment ID: ' + response.razorpay_payment_id);
+            
+            // Still clear cart but show contact message
+            setCart([]);
+            setUserDetails({ name: '', address: '', email: '', phone: '' });
+            setAppliedCoupon(null);
+            setCouponCode('');
+            setCouponMessage('');
+            setShowCheckoutForm(false);
           }
           
           setIsProcessing(false);

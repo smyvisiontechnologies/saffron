@@ -274,7 +274,7 @@ const Products = () => {
           alert('Payment successful! Saving your order...');
           
           // Save to Google Sheets using JSONP
-          const saved = await saveToGoogleSheets(response);
+          await saveToGoogleSheets(response);
           
           // Always show success (JSONP always resolves true)
           alert('✅ Order saved successfully! Thank you for your purchase.');

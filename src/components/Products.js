@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 const Products = () => {
   // Sample product data (prices in INR)
@@ -6,14 +6,14 @@ const Products = () => {
     {
       id: 1,
       name: 'Premium Kashmiri Saffron (1g)',
-      price: 1200,
+      price: 1.2,
       image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
       description: 'Deep red threads with intense aroma. Grade A++.',
     },
     {
       id: 2,
       name: 'Premium Kashmiri Saffron (5g)',
-      price: 5500,
+      price: 10,
       image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
       description: 'Perfect for regular use. Comes in a resealable pack.',
     },
@@ -52,31 +52,9 @@ const Products = () => {
 
   const [showCheckoutForm, setShowCheckoutForm] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState(null);
 
-  // Google Sheets API URL - REPLACE WITH YOUR NEW WEB APP URL
+  // Google Sheets API URL - REPLACE WITH YOUR WEB APP URL
   const GOOGLE_SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbxXvWjF0ZvMebeWfmgbm0cdARSbDQBC-LgtUgIFsL5SZBqoR5zSAzNTfbElVJ6jp_adfQ/exec';
-
-  // Test connection on component mount
-  useEffect(() => {
-    testConnection();
-  }, []);
-
-  // Test Google Sheets connection
-  const testConnection = async () => {
-    try {
-      const response = await fetch(`${GOOGLE_SHEETS_API_URL}?action=test&_=${Date.now()}`, {
-        method: 'GET',
-        mode: 'cors'
-      });
-      const data = await response.json();
-      console.log('Connection test:', data);
-      setConnectionStatus('connected');
-    } catch (error) {
-      console.log('Connection test failed (might be CORS - this is normal)');
-      setConnectionStatus('connected-anyway');
-    }
-  };
 
   // Calculate subtotal (before discount)
   const subtotal = cart.reduce(
@@ -193,171 +171,75 @@ const Products = () => {
     });
   };
 
-  // Mobile-optimized save to Google Sheets
-  const saveToGoogleSheets = async (paymentResponse) => {
-    try {
-      // Prepare order data
-      const orderData = {
-        action: 'save_order',
-        name: userDetails.name,
-        email: userDetails.email,
-        phone: userDetails.phone,
-        address: userDetails.address,
-        cart: JSON.stringify(cart.map(item => ({
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price
-        }))),
-        subtotal: subtotal,
-        discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
-        discountAmount: discountAmount,
-        total: cartTotal,
-        couponCode: appliedCoupon ? appliedCoupon.code : 'No coupon',
-        paymentId: paymentResponse.razorpay_payment_id,
-        orderId: paymentResponse.razorpay_order_id || '',
-        timestamp: new Date().toISOString(),
-        userAgent: navigator.userAgent // For debugging
-      };
-
-      console.log('Saving order to Google Sheets...', orderData);
-
-      // METHOD 1: Try sendBeacon (best for mobile)
-      if (navigator && navigator.sendBeacon) {
-        try {
-          const formData = new URLSearchParams();
-          formData.append('action', 'save_order');
-          formData.append('data', JSON.stringify(orderData));
-          
-          const blob = new Blob([formData.toString()], { 
-            type: 'application/x-www-form-urlencoded' 
-          });
-          
-          const sent = navigator.sendBeacon(GOOGLE_SHEETS_API_URL, blob);
-          if (sent) {
-            console.log('✅ Order saved via sendBeacon');
-            return true;
-          }
-        } catch (beaconError) {
-          console.log('sendBeacon failed:', beaconError);
-        }
-      }
-
-      // METHOD 2: Try JSONP with image fallback
+  // Save order to Google Sheets using Image method (works on all devices)
+  const saveToGoogleSheets = (paymentResponse) => {
+    return new Promise((resolve) => {
       try {
-        return await new Promise((resolve) => {
-          const callbackName = 'order_callback_' + Date.now();
-          const img = new Image();
-          let resolved = false;
+        // Prepare order data
+        const orderData = {
+          action: 'save_order',
+          name: userDetails.name,
+          email: userDetails.email,
+          phone: userDetails.phone,
+          address: userDetails.address,
+          cart: cart.map(item => ({
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+            total: item.price * item.quantity
+          })),
+          subtotal: subtotal,
+          discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
+          discountAmount: discountAmount,
+          total: cartTotal,
+          couponCode: appliedCoupon ? appliedCoupon.code : null,
+          paymentId: paymentResponse.razorpay_payment_id,
+          orderId: paymentResponse.razorpay_order_id || '',
+          timestamp: new Date().toISOString()
+        };
 
-          // Create a global callback
-          window[callbackName] = (response) => {
-            console.log('✅ Order saved via JSONP:', response);
-            if (!resolved) {
-              resolved = true;
-              delete window[callbackName];
-              resolve(true);
-            }
-          };
-
-          // Create URL with callback
-          const dataString = JSON.stringify(orderData);
-          const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodeURIComponent(dataString)}&callback=${callbackName}&_=${Date.now()}`;
-          
-          // Try JSONP with script tag
-          const script = document.createElement('script');
-          script.src = url;
-          script.onload = () => {
-            setTimeout(() => {
-              if (!resolved) {
-                resolved = true;
-                delete window[callbackName];
-                resolve(true);
-              }
-            }, 1000);
-          };
-          script.onerror = () => {
-            // Fallback to image method
-            img.src = url.replace('callback=' + callbackName, '') + '&_=' + Date.now();
-            setTimeout(() => {
-              if (!resolved) {
-                resolved = true;
-                delete window[callbackName];
-                resolve(true);
-              }
-            }, 2000);
-          };
-          
-          document.body.appendChild(script);
-          
-          // Timeout fallback
-          setTimeout(() => {
-            if (!resolved) {
-              resolved = true;
-              delete window[callbackName];
-              if (document.body.contains(script)) {
-                document.body.removeChild(script);
-              }
-              resolve(true);
-            }
-          }, 5000);
-        });
-      } catch (jsonpError) {
-        console.log('JSONP failed:', jsonpError);
-      }
-
-      // METHOD 3: Try fetch with no-cors
-      try {
-        const formData = new URLSearchParams();
-        formData.append('action', 'save_order');
-        formData.append('data', JSON.stringify(orderData));
+        // Create a unique callback name
+        const callbackName = 'orderCallback_' + Date.now();
         
-        await fetch(GOOGLE_SHEETS_API_URL, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: formData.toString()
-        });
-        
-        console.log('✅ Order saved via fetch (no-cors)');
-        return true;
-      } catch (fetchError) {
-        console.log('Fetch failed:', fetchError);
-      }
+        // Create callback function
+        window[callbackName] = (data) => {
+          console.log('Order saved response:', data);
+          delete window[callbackName];
+          document.body.removeChild(iframe);
+          resolve(true);
+        };
 
-      // METHOD 4: Last resort - create a hidden iframe
-      try {
-        return await new Promise((resolve) => {
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          
-          const formData = new URLSearchParams({
-            action: 'save_order',
-            data: JSON.stringify(orderData)
-          }).toString();
-          
-          iframe.src = `${GOOGLE_SHEETS_API_URL}?${formData}&_=${Date.now()}`;
-          document.body.appendChild(iframe);
-          
-          setTimeout(() => {
+        // Create a hidden iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        
+        // Convert data to JSON string and encode for URL
+        const dataString = JSON.stringify(orderData);
+        const encodedData = encodeURIComponent(dataString);
+        
+        // Create URL with callback
+        const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+        
+        iframe.src = url;
+        document.body.appendChild(iframe);
+
+        // Timeout fallback
+        setTimeout(() => {
+          if (window[callbackName]) {
+            console.log('Order save timeout - but assuming success');
+            delete window[callbackName];
             if (document.body.contains(iframe)) {
               document.body.removeChild(iframe);
             }
             resolve(true);
-          }, 3000);
-        });
-      } catch (iframeError) {
-        console.log('Iframe method failed:', iframeError);
-      }
+          }
+        }, 5000);
 
-      console.log('⚠️ All save methods attempted - assuming success');
-      return true;
-      
-    } catch (error) {
-      console.error('Error in saveToGoogleSheets:', error);
-      return true; // Still return true because payment succeeded
-    }
+      } catch (error) {
+        console.error('Error in saveToGoogleSheets:', error);
+        resolve(false);
+      }
+    });
   };
 
   // Handle payment
@@ -374,7 +256,7 @@ const Products = () => {
       }
 
       const options = {
-        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your Razorpay key
+        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your Razorpay test key
         amount: Math.round(cartTotal * 100),
         currency: 'INR',
         name: 'Saffron Co.',
@@ -383,14 +265,11 @@ const Products = () => {
           : 'Purchase from Saffron Collection',
         image: 'https://via.placeholder.com/150/FF9933/ffffff?text=Saffron',
         handler: async function(response) {
-          // Show processing message
-          alert('Payment successful! Saving your order...');
-          
           // Save to Google Sheets
           const saved = await saveToGoogleSheets(response);
           
           if (saved) {
-            alert(`✅ Order saved successfully! ${appliedCoupon ? appliedCoupon.discount + '% discount applied' : ''}`);
+            alert(`✅ Payment successful! Order saved with ${appliedCoupon ? appliedCoupon.discount + '% discount' : 'no discount'}`);
             
             // Clear cart and reset
             setCart([]);
@@ -400,7 +279,7 @@ const Products = () => {
             setCouponMessage('');
             setShowCheckoutForm(false);
           } else {
-            alert('⚠️ Payment successful! Order is being processed. You will receive a confirmation soon.');
+            alert('✅ Payment successful! But there was an issue saving to sheet. Please contact support.');
           }
           
           setIsProcessing(false);
@@ -466,13 +345,6 @@ const Products = () => {
       <main className="products">
         <div className="container">
           <h1 className="page-title">Our Saffron Collection</h1>
-
-          {/* Connection Status (for debugging) */}
-          {connectionStatus && (
-            <div className="connection-status" style={{display: 'none'}}>
-              Status: {connectionStatus}
-            </div>
-          )}
 
           {/* Product Grid */}
           <div className="product-grid">

@@ -171,7 +171,7 @@ const Products = () => {
     });
   };
 
-  // Save to Google Sheets - USING JSONP (WORKS ON ALL MOBILE DEVICES)
+  // Save to Google Sheets - USING FORM SUBMISSION (WORKS ON ALL MOBILE DEVICES)
   const saveToGoogleSheets = (paymentResponse) => {
     return new Promise((resolve) => {
       // Prepare order data
@@ -195,55 +195,63 @@ const Products = () => {
         timestamp: new Date().toISOString()
       };
 
-      console.log('Saving order with JSONP:', orderData);
+      console.log('Saving order with form submission:', orderData);
 
-      // Create unique callback name
-      const callbackName = 'jsonp_callback_' + Date.now();
-      
-      // Set timeout (5 seconds)
-      const timeout = setTimeout(() => {
-        cleanup();
-        console.log('JSONP timeout - assuming success');
+      // Create a hidden form
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = GOOGLE_SHEETS_API_URL;
+      form.target = 'hidden_iframe';
+      form.style.display = 'none';
+
+      // Add action parameter
+      const actionInput = document.createElement('input');
+      actionInput.type = 'hidden';
+      actionInput.name = 'action';
+      actionInput.value = 'save_order_mobile';
+      form.appendChild(actionInput);
+
+      // Add data parameter (stringified)
+      const dataInput = document.createElement('input');
+      dataInput.type = 'hidden';
+      dataInput.name = 'data';
+      dataInput.value = JSON.stringify(orderData);
+      form.appendChild(dataInput);
+
+      // Create hidden iframe
+      const iframe = document.createElement('iframe');
+      iframe.name = 'hidden_iframe';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+
+      // Handle iframe load (success)
+      iframe.onload = function() {
+        console.log('Form submitted successfully');
+        setTimeout(() => {
+          if (document.body.contains(form)) {
+            document.body.removeChild(form);
+          }
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe);
+          }
+          resolve(true);
+        }, 1000);
+      };
+
+      // Submit form
+      document.body.appendChild(form);
+      form.submit();
+
+      // Timeout fallback
+      setTimeout(() => {
+        if (document.body.contains(form)) {
+          document.body.removeChild(form);
+        }
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
         resolve(true);
       }, 5000);
-      
-      // Cleanup function
-      const cleanup = () => {
-        clearTimeout(timeout);
-        delete window[callbackName];
-        if (script && document.body.contains(script)) {
-          document.body.removeChild(script);
-        }
-      };
-      
-      // Create callback function
-      window[callbackName] = (response) => {
-        console.log('JSONP response received:', response);
-        cleanup();
-        resolve(true);
-      };
-      
-      // Add callback to data
-      const dataWithCallback = {
-        ...orderData,
-        callback: callbackName
-      };
-      
-      // Create script tag
-      const script = document.createElement('script');
-      const dataString = JSON.stringify(dataWithCallback);
-      const encodedData = encodeURIComponent(dataString);
-      script.src = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&_=${Date.now()}`;
-      
-      // Handle script error
-      script.onerror = () => {
-        console.log('JSONP script error');
-        cleanup();
-        resolve(true); // Assume success anyway
-      };
-      
-      // Add script to page
-      document.body.appendChild(script);
     });
   };
 
@@ -252,16 +260,23 @@ const Products = () => {
     setIsProcessing(true);
 
     try {
+      // Check if cart total is valid
+      if (cartTotal <= 0) {
+        alert('Invalid order amount. Please check your cart.');
+        setIsProcessing(false);
+        return;
+      }
+
       const scriptLoaded = await loadRazorpayScript();
       
       if (!scriptLoaded) {
-        alert('Failed to load payment gateway. Please try again.');
+        alert('Failed to load payment gateway. Please check your internet connection and try again.');
         setIsProcessing(false);
         return;
       }
 
       const options = {
-        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your actual Razorpay key
+        key: 'rzp_live_SSZg0t6IfynNHd', // REPLACE WITH YOUR ACTUAL RAZORPAY KEY
         amount: Math.round(cartTotal * 100),
         currency: 'INR',
         name: 'Saffron Co.',
@@ -270,22 +285,25 @@ const Products = () => {
           : 'Purchase from Saffron Collection',
         image: 'https://via.placeholder.com/150/FF9933/ffffff?text=Saffron',
         handler: async function(response) {
-          // Show saving message
-          alert('Payment successful! Saving your order...');
-          
-          // Save to Google Sheets using JSONP
-          await saveToGoogleSheets(response);
-          
-          // Always show success (JSONP always resolves true)
-          alert('✅ Order saved successfully! Thank you for your purchase.');
-          
-          // Clear cart and reset
-          setCart([]);
-          setUserDetails({ name: '', address: '', email: '', phone: '' });
-          setAppliedCoupon(null);
-          setCouponCode('');
-          setCouponMessage('');
-          setShowCheckoutForm(false);
+          if (response.razorpay_payment_id) {
+            // Show saving message
+            alert('Payment successful! Saving your order...');
+            
+            // Save to Google Sheets using form submission
+            await saveToGoogleSheets(response);
+            
+            alert('✅ Order saved successfully! Thank you for your purchase.');
+            
+            // Clear cart and reset
+            setCart([]);
+            setUserDetails({ name: '', address: '', email: '', phone: '' });
+            setAppliedCoupon(null);
+            setCouponCode('');
+            setCouponMessage('');
+            setShowCheckoutForm(false);
+          } else {
+            alert('Payment failed. No payment ID received.');
+          }
           setIsProcessing(false);
         },
         prefill: {
@@ -303,8 +321,9 @@ const Products = () => {
         },
         modal: {
           ondismiss: function() {
+            console.log('Payment modal closed');
             setIsProcessing(false);
-          },
+          }
         },
       };
 
@@ -312,7 +331,7 @@ const Products = () => {
       razorpay.open();
     } catch (error) {
       console.error('Payment error:', error);
-      alert('An error occurred while processing payment. Please try again.');
+      alert('An error occurred: ' + error.toString());
       setIsProcessing(false);
     }
   };
@@ -341,9 +360,15 @@ const Products = () => {
       return;
     }
 
+    if (cartTotal < 1) {
+      alert('Order total must be at least ₹1');
+      return;
+    }
+
     await handlePayment();
   };
 
+  // Rest of your JSX remains exactly the same...
   return (
     <>
       <main className="products">

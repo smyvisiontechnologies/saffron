@@ -171,104 +171,102 @@ const Products = () => {
     });
   };
 
-  // Save order to Google Sheets using Image method (works on all devices)
- // Save order to Google Sheets using fetch API with proper CORS handling
-const saveToGoogleSheets = async (paymentResponse) => {
-  try {
-    // Prepare order data
-    const orderData = {
-      action: 'save_order',
-      name: userDetails.name,
-      email: userDetails.email,
-      phone: userDetails.phone,
-      address: userDetails.address,
-      cart: cart.map(item => ({
-        name: item.name,
-        quantity: item.quantity,
-        price: item.price,
-        total: item.price * item.quantity
-      })),
-      subtotal: subtotal,
-      discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
-      discountAmount: discountAmount,
-      total: cartTotal,
-      couponCode: appliedCoupon ? appliedCoupon.code : null,
-      paymentId: paymentResponse.razorpay_payment_id,
-      orderId: paymentResponse.razorpay_order_id || '',
-      timestamp: new Date().toISOString()
-    };
-
-    // Try POST request first (best for mobile)
+  // Save order to Google Sheets using fetch API with proper CORS handling
+  const saveToGoogleSheets = async (paymentResponse) => {
     try {
-      const response = await fetch(GOOGLE_SHEETS_API_URL, {
-        method: 'POST',
-        mode: 'no-cors', // This helps with CORS issues on mobile
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderData)
-      });
-      
-      // With no-cors, we can't read response, so assume success
-      console.log('Order saved via POST');
-      return true;
-    } catch (postError) {
-      console.log('POST failed, trying GET method:', postError);
-      
-      // Fallback to GET with image/iframe method
-      return new Promise((resolve) => {
-        try {
-          // Create a unique callback name
-          const callbackName = 'orderCallback_' + Date.now();
-          
-          // Create callback function
-          window[callbackName] = (data) => {
-            console.log('Order saved response via GET:', data);
-            delete window[callbackName];
-            if (iframe && document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
-            resolve(true);
-          };
+      // Prepare order data
+      const orderData = {
+        action: 'save_order',
+        name: userDetails.name,
+        email: userDetails.email,
+        phone: userDetails.phone,
+        address: userDetails.address,
+        cart: cart.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          total: item.price * item.quantity
+        })),
+        subtotal: subtotal,
+        discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
+        discountAmount: discountAmount,
+        total: cartTotal,
+        couponCode: appliedCoupon ? appliedCoupon.code : null,
+        paymentId: paymentResponse.razorpay_payment_id,
+        orderId: paymentResponse.razorpay_order_id || '',
+        timestamp: new Date().toISOString()
+      };
 
-          // Create a hidden iframe
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          
-          // Convert data to JSON string and encode for URL
-          const dataString = JSON.stringify(orderData);
-          const encodedData = encodeURIComponent(dataString);
-          
-          // Create URL with callback
-          const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
-          
-          iframe.src = url;
-          document.body.appendChild(iframe);
-
-          // Timeout fallback
-          setTimeout(() => {
-            if (window[callbackName]) {
-              console.log('Order save timeout - assuming success');
+      // Try POST request first (best for mobile)
+      try {
+        await fetch(GOOGLE_SHEETS_API_URL, {
+          method: 'POST',
+          mode: 'no-cors', // This helps with CORS issues on mobile
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(orderData)
+        });
+        
+        // With no-cors, we can't read response, so assume success
+        console.log('Order saved via POST');
+        return true;
+      } catch (postError) {
+        console.log('POST failed, trying GET method:', postError);
+        
+        // Fallback to GET with image/iframe method
+        return new Promise((resolve) => {
+          try {
+            // Create a unique callback name
+            const callbackName = 'orderCallback_' + Date.now();
+            
+            // Create callback function
+            window[callbackName] = (data) => {
+              console.log('Order saved response via GET:', data);
               delete window[callbackName];
-              if (document.body.contains(iframe)) {
+              if (iframe && document.body.contains(iframe)) {
                 document.body.removeChild(iframe);
               }
               resolve(true);
-            }
-          }, 5000);
+            };
 
-        } catch (iframeError) {
-          console.error('Error in iframe method:', iframeError);
-          resolve(false);
-        }
-      });
+            // Create a hidden iframe
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            
+            // Convert data to JSON string and encode for URL
+            const dataString = JSON.stringify(orderData);
+            const encodedData = encodeURIComponent(dataString);
+            
+            // Create URL with callback
+            const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+            
+            iframe.src = url;
+            document.body.appendChild(iframe);
+
+            // Timeout fallback
+            setTimeout(() => {
+              if (window[callbackName]) {
+                console.log('Order save timeout - assuming success');
+                delete window[callbackName];
+                if (document.body.contains(iframe)) {
+                  document.body.removeChild(iframe);
+                }
+                resolve(true);
+              }
+            }, 5000);
+
+          } catch (iframeError) {
+            console.error('Error in iframe method:', iframeError);
+            resolve(false);
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error in saveToGoogleSheets:', error);
+      return false;
     }
-  } catch (error) {
-    console.error('Error in saveToGoogleSheets:', error);
-    return false;
-  }
-};
-
+  };
 
   // Handle payment
   const handlePayment = async () => {

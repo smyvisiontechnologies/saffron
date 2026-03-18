@@ -4,9 +4,9 @@ const Products = () => {
   // Sample product data
   const products = [
     {
-      id: 1.2,
+      id: 1,
       name: 'Premium Kashmiri Saffron (1g)',
-      price: 1,
+      price: 1.2,
       image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
       description: 'Deep red threads with intense aroma. Grade A++.',
     },

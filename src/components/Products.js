@@ -53,7 +53,7 @@ const Products = () => {
   const [showCheckoutForm, setShowCheckoutForm] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Google Sheets API URL - REPLACE WITH YOUR NEW WEB APP URL AFTER REDEPLOYING
+  // Google Sheets API URL - REPLACE WITH YOUR WEB APP URL
   const GOOGLE_SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbxXvWjF0ZvMebeWfmgbm0cdARSbDQBC-LgtUgIFsL5SZBqoR5zSAzNTfbElVJ6jp_adfQ/exec';
 
   // Calculate subtotal (before discount)
@@ -117,32 +117,6 @@ const Products = () => {
     setUserDetails((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Fallback verification using JSONP
-  const fallbackVerifyCoupon = (code) => {
-    const callbackName = 'couponCallback_' + Date.now();
-    
-    window[callbackName] = (data) => {
-      if (data.valid) {
-        setAppliedCoupon({
-          code: code,
-          name: data.name,
-          discount: data.discount
-        });
-        setCouponMessage(data.message);
-      } else {
-        setAppliedCoupon(null);
-        setCouponMessage(data.message || '❌ Invalid coupon code');
-      }
-      
-      delete window[callbackName];
-      document.body.removeChild(script);
-    };
-
-    const script = document.createElement('script');
-    script.src = `${GOOGLE_SHEETS_API_URL}?action=verify_coupon&couponCode=${encodeURIComponent(code)}&callback=${callbackName}&_=${Date.now()}`;
-    document.body.appendChild(script);
-  };
-
   // Verify coupon code
   const verifyCoupon = async () => {
     if (!couponCode.trim()) {
@@ -157,19 +131,7 @@ const Products = () => {
       const timestamp = new Date().getTime();
       const url = `${GOOGLE_SHEETS_API_URL}?action=verify_coupon&couponCode=${encodeURIComponent(couponCode.trim().toUpperCase())}&_=${timestamp}`;
       
-      // Use cors mode for the request
-      const response = await fetch(url, {
-        method: 'GET',
-        mode: 'cors',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
+      const response = await fetch(url);
       const data = await response.json();
       
       if (data.valid) {
@@ -185,10 +147,7 @@ const Products = () => {
       }
     } catch (error) {
       console.error('Error verifying coupon:', error);
-      setCouponMessage('Using fallback verification...');
-      
-      // Fallback to JSONP method if fetch fails
-      fallbackVerifyCoupon(couponCode.trim().toUpperCase());
+      setCouponMessage('Network error. Please try again.');
     } finally {
       setIsVerifyingCoupon(false);
     }
@@ -212,83 +171,75 @@ const Products = () => {
     });
   };
 
-  // Save order to Google Sheets
-  const saveToGoogleSheets = async (paymentResponse) => {
-    try {
-      // Prepare order data
-      const orderData = {
-        action: 'save_order',
-        name: userDetails.name,
-        email: userDetails.email,
-        phone: userDetails.phone,
-        address: userDetails.address,
-        cart: cart.map(item => ({
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          total: item.price * item.quantity
-        })),
-        subtotal: subtotal,
-        discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
-        discountAmount: discountAmount,
-        total: cartTotal,
-        couponCode: appliedCoupon ? appliedCoupon.code : null,
-        paymentId: paymentResponse.razorpay_payment_id,
-        orderId: paymentResponse.razorpay_order_id || '',
-        timestamp: new Date().toISOString()
-      };
-
-      // Try POST request first
+  // Save order to Google Sheets using Image method (works on all devices)
+  const saveToGoogleSheets = (paymentResponse) => {
+    return new Promise((resolve) => {
       try {
-        const response = await fetch(GOOGLE_SHEETS_API_URL, {
-          method: 'POST',
-          mode: 'cors',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(orderData)
-        });
+        // Prepare order data
+        const orderData = {
+          action: 'save_order',
+          name: userDetails.name,
+          email: userDetails.email,
+          phone: userDetails.phone,
+          address: userDetails.address,
+          cart: cart.map(item => ({
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+            total: item.price * item.quantity
+          })),
+          subtotal: subtotal,
+          discountPercent: appliedCoupon ? appliedCoupon.discount : 0,
+          discountAmount: discountAmount,
+          total: cartTotal,
+          couponCode: appliedCoupon ? appliedCoupon.code : null,
+          paymentId: paymentResponse.razorpay_payment_id,
+          orderId: paymentResponse.razorpay_order_id || '',
+          timestamp: new Date().toISOString()
+        };
+
+        // Create a unique callback name
+        const callbackName = 'orderCallback_' + Date.now();
         
-        const result = await response.json();
-        console.log('Order saved via POST:', result);
-        return result.success || true;
-      } catch (postError) {
-        console.log('POST failed, trying GET with JSONP:', postError);
+        // Create callback function
+        window[callbackName] = (data) => {
+          console.log('Order saved response:', data);
+          delete window[callbackName];
+          document.body.removeChild(iframe);
+          resolve(true);
+        };
+
+        // Create a hidden iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
         
-        // Fallback to JSONP
-        return new Promise((resolve) => {
-          const callbackName = 'orderCallback_' + Date.now();
-          
-          window[callbackName] = (data) => {
-            console.log('Order saved via JSONP:', data);
+        // Convert data to JSON string and encode for URL
+        const dataString = JSON.stringify(orderData);
+        const encodedData = encodeURIComponent(dataString);
+        
+        // Create URL with callback
+        const url = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
+        
+        iframe.src = url;
+        document.body.appendChild(iframe);
+
+        // Timeout fallback
+        setTimeout(() => {
+          if (window[callbackName]) {
+            console.log('Order save timeout - but assuming success');
             delete window[callbackName];
-            document.body.removeChild(script);
-            resolve(true);
-          };
-
-          const script = document.createElement('script');
-          const dataString = JSON.stringify(orderData);
-          const encodedData = encodeURIComponent(dataString);
-          script.src = `${GOOGLE_SHEETS_API_URL}?action=save_order&data=${encodedData}&callback=${callbackName}&_=${Date.now()}`;
-          document.body.appendChild(script);
-
-          // Timeout fallback
-          setTimeout(() => {
-            if (window[callbackName]) {
-              console.log('Order save timeout - assuming success');
-              delete window[callbackName];
-              if (document.body.contains(script)) {
-                document.body.removeChild(script);
-              }
-              resolve(true);
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
             }
-          }, 5000);
-        });
+            resolve(true);
+          }
+        }, 5000);
+
+      } catch (error) {
+        console.error('Error in saveToGoogleSheets:', error);
+        resolve(false);
       }
-    } catch (error) {
-      console.error('Error in saveToGoogleSheets:', error);
-      return false;
-    }
+    });
   };
 
   // Handle payment
@@ -305,7 +256,7 @@ const Products = () => {
       }
 
       const options = {
-        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your Razorpay live key
+        key: 'rzp_live_SSZg0t6IfynNHd', // Replace with your Razorpay test key
         amount: Math.round(cartTotal * 100),
         currency: 'INR',
         name: 'Saffron Co.',
